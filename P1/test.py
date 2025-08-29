@@ -17,50 +17,101 @@ def plot_graph(test_df):
     plt.ylabel("Price")
     plt.legend(["Actual Price", "Predicted Price"])
     plt.show()
-
-
 def get_final_df(model, data):
     """
-    This function takes the `model` and `data` dict to
-    construct a final dataframe that includes the features along
-    with true and predicted prices of the testing dataset
+    Build a dataframe with actual vs predicted prices for the test set.
+    - Flattens MultiIndex columns (uses level 0)
+    - Normalizes names to lowercase
+    - Ensures 'adjclose' exists (fallbacks)
+    - Forces numeric dtypes
+    - Vectorized profit computation
     """
-    # if predicted future price is higher than the current,
-    # then calculate the true future price minus the current price, to get the buy profit
-    buy_profit  = lambda current, pred_future, true_future: true_future - current if pred_future > current else 0
-    # if the predicted future price is lower than the current price,
-    # then subtract the true future price from the current price
-    sell_profit = lambda current, pred_future, true_future: current - true_future if pred_future < current else 0
+    import numpy as np
+    import pandas as pd
+
+    def _series_from_aliases(df, aliases):
+        """Return the first matching column as a Series, even if duplicates exist."""
+        cols = [str(c).lower() for c in df.columns]
+        for alias in aliases:
+            if alias in cols:
+                idxs = [i for i, c in enumerate(cols) if c == alias]
+                s = df.iloc[:, idxs[0]]
+                if isinstance(s, pd.DataFrame):
+                    s = s.iloc[:, 0]
+                return s.squeeze()
+        raise KeyError(f"None of aliases {aliases} found in columns: {list(df.columns)}")
+
     X_test = data["X_test"]
     y_test = data["y_test"]
-    # perform prediction and get prices
-    y_pred = model.predict(X_test)
+
+    # Predict
+    y_pred = model.predict(X_test, verbose=0)
+
+    # Invert scaling if needed
     if SCALE:
-        y_test = np.squeeze(data["column_scaler"]["adjclose"].inverse_transform(np.expand_dims(y_test, axis=0)))
-        y_pred = np.squeeze(data["column_scaler"]["adjclose"].inverse_transform(y_pred))
-    test_df = data["test_df"]
-    # add predicted future prices to the dataframe
-    test_df[f"adjclose_{LOOKUP_STEP}"] = y_pred
-    # add true future prices to the dataframe
-    test_df[f"true_adjclose_{LOOKUP_STEP}"] = y_test
-    # sort the dataframe by date
+        y_test = np.squeeze(
+            data["column_scaler"]["adjclose"].inverse_transform(np.expand_dims(y_test, axis=0))
+        )
+        y_pred = np.squeeze(
+            data["column_scaler"]["adjclose"].inverse_transform(y_pred)
+        )
+    else:
+        y_test = np.squeeze(y_test)
+        y_pred = np.squeeze(y_pred)
+
+    # Work on a copy
+    test_df = data["test_df"].copy()
+
+    # --- FLATTEN MultiIndex columns (take level 0) ---
+    if isinstance(test_df.columns, pd.MultiIndex):
+        test_df.columns = [str(t[0]) for t in test_df.columns]
+
+    # --- Normalize to lowercase, drop dups ---
+    test_df.columns = [str(c).lower() for c in test_df.columns]
+    test_df = test_df.loc[:, ~test_df.columns.duplicated(keep="first")]
+
+    # Ensure base 'adjclose' exists
+    if "adjclose" not in test_df.columns:
+        if "adj close" in test_df.columns:
+            test_df["adjclose"] = test_df["adj close"]
+        elif "close" in test_df.columns:
+            test_df["adjclose"] = test_df["close"]
+
+    # Attach predictions/ground truth
+    test_df[f"adjclose_{LOOKUP_STEP}"] = np.asarray(y_pred, dtype=float)
+    test_df[f"true_adjclose_{LOOKUP_STEP}"] = np.asarray(y_test, dtype=float)
+
+    # Robust Series selection → numeric float
+    adj_s  = _series_from_aliases(test_df, ["adjclose", "adj close", "close"])
+    pred_s = _series_from_aliases(test_df, [f"adjclose_{LOOKUP_STEP}"])
+    true_s = _series_from_aliases(test_df, [f"true_adjclose_{LOOKUP_STEP}"])
+
+    adj_s  = pd.to_numeric(adj_s, errors="coerce").astype(float)
+    pred_s = pd.to_numeric(pred_s, errors="coerce").astype(float)
+    true_s = pd.to_numeric(true_s, errors="coerce").astype(float)
+
+    # Write back cleaned series
+    test_df["adjclose"] = adj_s
+    test_df[f"adjclose_{LOOKUP_STEP}"] = pred_s
+    test_df[f"true_adjclose_{LOOKUP_STEP}"] = true_s
+
+    # Sort by time
     test_df.sort_index(inplace=True)
-    final_df = test_df
-    # add the buy profit column
-    final_df["buy_profit"] = list(map(buy_profit,
-                                    final_df["adjclose"],
-                                    final_df[f"adjclose_{LOOKUP_STEP}"],
-                                    final_df[f"true_adjclose_{LOOKUP_STEP}"])
-                                    # since we don't have profit for last sequence, add 0's
-                                    )
-    # add the sell profit column
-    final_df["sell_profit"] = list(map(sell_profit,
-                                    final_df["adjclose"],
-                                    final_df[f"adjclose_{LOOKUP_STEP}"],
-                                    final_df[f"true_adjclose_{LOOKUP_STEP}"])
-                                    # since we don't have profit for last sequence, add 0's
-                                    )
-    return final_df
+
+    # Vectorized profits
+    cur  = test_df["adjclose"].to_numpy()
+    pred = test_df[f"adjclose_{LOOKUP_STEP}"].to_numpy()
+    true = test_df[f"true_adjclose_{LOOKUP_STEP}"].to_numpy()
+
+    test_df["buy_profit"]  = np.where(pred > cur,  true - cur,  0.0)
+    test_df["sell_profit"] = np.where(pred < cur,  cur - true,  0.0)
+
+    return test_df
+
+
+
+
+
 
 
 def predict(model, data):
@@ -88,7 +139,13 @@ model = create_model(N_STEPS, len(FEATURE_COLUMNS), loss=LOSS, units=UNITS, cell
                     dropout=DROPOUT, optimizer=OPTIMIZER, bidirectional=BIDIRECTIONAL)
 
 # load optimal model weights from results folder
-model_path = os.path.join("results", model_name) + ".h5"
+import glob, os
+
+weights_files = glob.glob("results/*.weights.h5")
+if not weights_files:
+    raise FileNotFoundError("No weights found in results/")
+model_path = max(weights_files, key=os.path.getmtime)  # pick most recent
+print("Loading:", model_path)
 model.load_weights(model_path)
 
 # evaluate the model
@@ -130,3 +187,6 @@ if not os.path.isdir(csv_results_folder):
     os.mkdir(csv_results_folder)
 csv_filename = os.path.join(csv_results_folder, model_name + ".csv")
 final_df.to_csv(csv_filename)
+import matplotlib.pyplot as plt
+
+# Plot Actual vs Predicted (LOOKUP_STEP-ahead)

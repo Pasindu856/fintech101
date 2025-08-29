@@ -1,0 +1,11 @@
+numpy
+pandas
+scikit-learn
+matplotlib
+mplfinance
+yfinance
+jupyter
+# If using DL now or soon:
+tensorflow-macos; platform_system == "Darwin" and platform_machine == "arm64"
+tensorflow-metal; platform_system == "Darwin" and platform_machine == "arm64"
+# (If you’re on Intel Mac or Windows, swap for 'tensorflow' instead of the two above)
