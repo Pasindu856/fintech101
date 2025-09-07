@@ -2,7 +2,7 @@
 # Authors: Bao Vo and Cheong Koo
 # Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
 
-# Code modified from:Pasindu Pahasara
+# Code modified from:
 # Title: Predicting Stock Prices with Python
 # Youtuble link: https://www.youtube.com/watch?v=PuZY9q-aKLw
 # By: NeuralNine
