@@ -1,35 +1,8 @@
-# Virtual environments
-venv/
-.env/
+# Ignore everything
+*
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# But keep Python source files
+!*.py
 
-# Jupyter notebook checkpoints
-.ipynb_checkpoints/
-
-# Logs
-*.log
-
-# Data / models (keep them local, not in GitHub)
-data/
-datasets/
-models/
-*.csv
-*.tsv
-*.jsonl
-*.zip
-*.tar
-*.h5
-*.hdf5
-*.pt
-*.pth
-*.pkl
-
-# OS / IDE files
-.DS_Store
-.idea/
-.vscode/
+# Also keep .gitignore itself
+!.gitignore
