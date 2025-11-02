@@ -1,0 +1,2 @@
+FeatureSet,Model,Accuracy,Precision,Recall,F1
+PricePlusSentiment,LogisticRegression,0.5367088607594936,0.5358649789029536,0.635,0.5812356979405034
